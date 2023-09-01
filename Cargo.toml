@@ -1,0 +1,10 @@
+[package]
+name = "slabbin"
+version = "0.1.0"
+edition = "2021"
+authors = ["marc0246 <40955683+marc0246@users.noreply.github.com>"]
+repository = "https://github.com/vulkano-rs/slabbin"
+description = "An efficient slab allocator with stable addresses"
+documentation = "https://docs.rs/slabbin"
+keywords = ["slab", "allocator"]
+categories = ["memory-management", "no-std"]
