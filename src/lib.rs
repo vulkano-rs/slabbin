@@ -206,7 +206,7 @@ impl<T> SlabAllocator<T> {
     }
 
     fn slab_layout(&self) -> Layout {
-        Layout::new::<Option<NonNull<Self>>>()
+        Layout::new::<Option<NonNull<Slab<T>>>>()
             .extend(Layout::array::<Slot<T>>(self.slab_capacity).unwrap())
             .unwrap()
             .0
@@ -311,5 +311,56 @@ mod tests {
         assert_eq!(&*z, &69);
 
         unsafe { allocator.deallocate(z_ptr) };
+    }
+
+    #[test]
+    fn multiple_slabs() {
+        let allocator = SlabAllocator::<i32>::new(1);
+
+        let mut x_ptr = allocator.allocate();
+        unsafe { x_ptr.as_ptr().write(1) };
+        let x = unsafe { x_ptr.as_mut() };
+
+        let mut y_ptr = allocator.allocate();
+        unsafe { y_ptr.as_ptr().write(2) };
+        let y = unsafe { y_ptr.as_mut() };
+
+        let mut z_ptr = allocator.allocate();
+        unsafe { z_ptr.as_ptr().write(3) };
+        let z = unsafe { z_ptr.as_mut() };
+
+        mem::swap(x, y);
+        mem::swap(y, z);
+        mem::swap(z, x);
+
+        unsafe { allocator.deallocate(y_ptr) };
+
+        let mut y2_ptr = allocator.allocate();
+        unsafe { y2_ptr.as_ptr().write(20) };
+        let y2 = unsafe { y2_ptr.as_mut() };
+
+        mem::swap(x, y2);
+
+        unsafe { allocator.deallocate(x_ptr) };
+        unsafe { allocator.deallocate(z_ptr) };
+
+        let mut x2_ptr = allocator.allocate();
+        unsafe { x2_ptr.as_ptr().write(10) };
+        let x2 = unsafe { x2_ptr.as_mut() };
+
+        mem::swap(y2, x2);
+
+        let mut z2_ptr = allocator.allocate();
+        unsafe { z2_ptr.as_ptr().write(30) };
+        let z2 = unsafe { z2_ptr.as_mut() };
+
+        mem::swap(x2, z2);
+
+        unsafe { allocator.deallocate(x2_ptr) }
+
+        mem::swap(z2, y2);
+
+        unsafe { allocator.deallocate(y2_ptr) }
+        unsafe { allocator.deallocate(z2_ptr) }
     }
 }
