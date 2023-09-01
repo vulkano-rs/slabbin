@@ -92,7 +92,8 @@ impl<T> SlabAllocator<T> {
     ///
     /// # Panics
     ///
-    /// Panics if `slab_capacity` is zero.
+    /// * Panics if `slab_capacity` is zero.
+    /// * Panics if the size of a slab exceeds `isize::MAX` bytes.
     ///
     /// [slab]: self#slabs
     #[must_use]
@@ -112,6 +113,10 @@ impl<T> SlabAllocator<T> {
     /// initialized before creating a reference to it.
     ///
     /// This operation is *O*(1) (amortized).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the size of a slab exceeds `isize::MAX` bytes.
     #[inline(always)]
     #[must_use]
     pub fn allocate(&self) -> NonNull<T> {
@@ -129,6 +134,10 @@ impl<T> SlabAllocator<T> {
     /// # Errors
     ///
     /// Returns an error if the global allocator returns an error.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the size of a slab exceeds `isize::MAX` bytes.
     ///
     /// This operation is *O*(1) (amortized).
     #[inline(always)]
