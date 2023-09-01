@@ -11,6 +11,16 @@
 //! structures. If you don't have this requirement you may consider using [`slab`] or
 //! [`typed-arena`] for example as a safe alternative.
 //!
+//! # Slabs
+//!
+//! A slab is a pre-allocated, pre-initialized contiguous chunk of memory containing *slots*. Each
+//! slot can either be free or occupied. Free slots are chained together in a linked list, and a
+//! slab always starts out with all slots free and linked in order. Due to this, once a slab is
+//! allocated and initialized this way, allocation amounts to a whooping total of 3 operations. The
+//! same goes for deallocation, except that this is always the case, not only in the amortized
+//! case. If you can't afford the amortized case, you can allocate slabs upfront before you start
+//! allocating individual slots.
+//!
 //! [`slab`]: https://crates.io/crates/slab
 //! [`typed-arena`]: https://crates.io/crates/typed-arena
 
@@ -27,6 +37,11 @@ use core::{
     ptr::{self, NonNull},
 };
 
+/// An efficient slab allocator with stable addresses.
+///
+/// See also [the crate-level documentation] for more information about slab allocation.
+///
+/// [the crate-level documentation]: self
 #[derive(Debug, Default)]
 pub struct SlabAllocator<T> {
     free_list_head: Cell<Option<NonNull<Slot<T>>>>,
@@ -47,13 +62,15 @@ unsafe impl<T> Send for SlabAllocator<T> {}
 impl<T> SlabAllocator<T> {
     /// Creates a new `SlabAllocator`.
     ///
-    /// `slab_capacity` is the number of slots in a slab.
+    /// `slab_capacity` is the number of slots in a [slab].
     ///
     /// No memory is allocated until you call one of the `allocate` methods.
     ///
     /// # Panics
     ///
     /// Panics if `slab_capacity` is zero.
+    ///
+    /// [slab]: self#slabs
     #[inline]
     #[must_use]
     pub const fn new(slab_capacity: usize) -> Self {
@@ -68,7 +85,7 @@ impl<T> SlabAllocator<T> {
 
     /// Creates a new `SlabAllocator` with the given `slab_count`.
     ///
-    /// `slab_capacity` is the number of slots in a slab.
+    /// `slab_capacity` is the number of slots in a [slab].
     ///
     /// `slab_count` slabs will be allocated upfront, unless its zero, in which case no memory will
     /// be allocated.
@@ -76,6 +93,8 @@ impl<T> SlabAllocator<T> {
     /// # Panics
     ///
     /// Panics if `slab_capacity` is zero.
+    ///
+    /// [slab]: self#slabs
     #[must_use]
     pub fn with_slab_count(slab_capacity: usize, slab_count: usize) -> Self {
         let allocator = SlabAllocator::new(slab_capacity);
