@@ -162,7 +162,21 @@ impl<T> SlabAllocator<T> {
         // We can safely hand the user a pointer to `T`, which is valid for writes of `T`, because
         // `Slot<T>` is a `#[repr(C)]` union with `T` as one of its fields. Therefore, the slot
         // must be aligned for `T`, and the field must start at the same point as the slot.
-        Some(head.cast::<T>())
+        let ptr = head.cast::<T>();
+
+        // Make Miri comprehend that a slot must be initialized before reading it, even if
+        // `size_of::<T>()` <= `size_of::<usize>()` in which case we happened to have initialized
+        // the bytes.
+        #[cfg(miri)]
+        {
+            use core::mem::MaybeUninit;
+
+            let ptr = ptr.as_ptr().cast::<MaybeUninit<T>>();
+
+            unsafe { ptr.write(MaybeUninit::uninit()) };
+        }
+
+        Some(ptr)
     }
 
     #[cold]
@@ -386,7 +400,7 @@ mod tests {
         unsafe { x.as_ptr().write(1) };
 
         let mut y = allocator.allocate();
-        unsafe { x.as_ptr().write(2) };
+        unsafe { y.as_ptr().write(2) };
 
         mem::swap(unsafe { x.as_mut() }, unsafe { y.as_mut() });
 
