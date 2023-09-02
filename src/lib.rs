@@ -42,7 +42,6 @@ use core::{
 /// See also [the crate-level documentation] for more information about slab allocation.
 ///
 /// [the crate-level documentation]: self
-#[derive(Debug)]
 pub struct SlabAllocator<T> {
     free_list_head: Cell<Option<NonNull<Slot<T>>>>,
     slab_list_head: Cell<Option<NonNull<Slab<T>>>>,
@@ -276,6 +275,30 @@ impl<T> SlabAllocator<T> {
         unsafe { (*ptr.as_ptr()).next_free = self.free_list_head.get() };
 
         self.free_list_head.set(Some(ptr));
+    }
+
+    fn slab_count(&self) -> usize {
+        let mut head = self.slab_list_head.get();
+        let mut count = 0;
+
+        while let Some(slab) = head {
+            // SAFETY: `slab` being in the slab list means it refers to a currently allocated slab
+            // and that its header is properly initialized.
+            unsafe { head = (*slab.as_ptr()).next };
+
+            count += 1;
+        }
+
+        count
+    }
+}
+
+impl<T> fmt::Debug for SlabAllocator<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SlabAllocator")
+            .field("slab_count", &self.slab_count())
+            .field("slab_capacity", &self.slab_capacity)
+            .finish()
     }
 }
 
