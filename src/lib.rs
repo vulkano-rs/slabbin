@@ -377,4 +377,145 @@ mod tests {
         unsafe { allocator.deallocate(y2) };
         unsafe { allocator.deallocate(z2) };
     }
+
+    #[test]
+    fn basic_usage3() {
+        let allocator = SlabAllocator::<i32>::new(2);
+
+        let mut x = allocator.allocate();
+        unsafe { x.as_ptr().write(1) };
+
+        let mut y = allocator.allocate();
+        unsafe { x.as_ptr().write(2) };
+
+        mem::swap(unsafe { x.as_mut() }, unsafe { y.as_mut() });
+
+        let z = allocator.allocate();
+        unsafe { z.as_ptr().write(3) };
+
+        unsafe { allocator.deallocate(x) };
+        unsafe { allocator.deallocate(z) };
+
+        let mut z2 = allocator.allocate();
+        unsafe { z2.as_ptr().write(30) };
+
+        let mut x2 = allocator.allocate();
+        unsafe { x2.as_ptr().write(10) };
+
+        mem::swap(unsafe { x2.as_mut() }, unsafe { z2.as_mut() });
+
+        unsafe { allocator.deallocate(x2) };
+        unsafe { allocator.deallocate(y) };
+        unsafe { allocator.deallocate(z2) };
+    }
+
+    #[test]
+    fn reusing_slots1() {
+        let allocator = SlabAllocator::<i32>::new(2);
+
+        let x = allocator.allocate();
+        let y = allocator.allocate();
+
+        unsafe { allocator.deallocate(y) };
+
+        let y2 = allocator.allocate();
+        assert_eq!(y2, y);
+
+        unsafe { allocator.deallocate(x) };
+
+        let x2 = allocator.allocate();
+        assert_eq!(x2, x);
+
+        unsafe { allocator.deallocate(y2) };
+        unsafe { allocator.deallocate(x2) };
+    }
+
+    #[test]
+    fn reusing_slots2() {
+        let allocator = SlabAllocator::<i32>::new(1);
+
+        let x = allocator.allocate();
+
+        unsafe { allocator.deallocate(x) };
+
+        let x2 = allocator.allocate();
+        assert_eq!(x, x2);
+
+        let y = allocator.allocate();
+        let z = allocator.allocate();
+
+        unsafe { allocator.deallocate(y) };
+        unsafe { allocator.deallocate(x2) };
+
+        let x3 = allocator.allocate();
+        let y2 = allocator.allocate();
+        assert_eq!(x3, x2);
+        assert_eq!(y2, y);
+
+        unsafe { allocator.deallocate(x3) };
+        unsafe { allocator.deallocate(y2) };
+        unsafe { allocator.deallocate(z) };
+    }
+
+    #[test]
+    fn reusing_slots3() {
+        let allocator = SlabAllocator::<i32>::new(2);
+
+        let x = allocator.allocate();
+        let y = allocator.allocate();
+
+        unsafe { allocator.deallocate(x) };
+        unsafe { allocator.deallocate(y) };
+
+        let y2 = allocator.allocate();
+        let x2 = allocator.allocate();
+        let z = allocator.allocate();
+        assert_eq!(x2, x);
+        assert_eq!(y2, y);
+
+        unsafe { allocator.deallocate(x2) };
+        unsafe { allocator.deallocate(z) };
+        unsafe { allocator.deallocate(y2) };
+
+        let y3 = allocator.allocate();
+        let z2 = allocator.allocate();
+        let x3 = allocator.allocate();
+        assert_eq!(y3, y2);
+        assert_eq!(z2, z);
+        assert_eq!(x3, x2);
+
+        unsafe { allocator.deallocate(x3) };
+        unsafe { allocator.deallocate(y3) };
+        unsafe { allocator.deallocate(z2) };
+    }
+
+    #[test]
+    fn same_slab() {
+        const MAX_DIFF: usize = 2 * mem::size_of::<Slot<i32>>();
+
+        let allocator = SlabAllocator::<i32>::new(3);
+
+        let x = allocator.allocate();
+        let y = allocator.allocate();
+        let z = allocator.allocate();
+
+        assert!((x.as_ptr() as usize).abs_diff(y.as_ptr() as usize) <= MAX_DIFF);
+        assert!((y.as_ptr() as usize).abs_diff(z.as_ptr() as usize) <= MAX_DIFF);
+        assert!((z.as_ptr() as usize).abs_diff(x.as_ptr() as usize) <= MAX_DIFF);
+    }
+
+    #[test]
+    fn different_slabs() {
+        const MIN_DIFF: usize = mem::size_of::<Slab<i32>>();
+
+        let allocator = SlabAllocator::<i32>::new(1);
+
+        let x = allocator.allocate();
+        let y = allocator.allocate();
+        let z = allocator.allocate();
+
+        assert!((x.as_ptr() as usize).abs_diff(y.as_ptr() as usize) >= MIN_DIFF);
+        assert!((y.as_ptr() as usize).abs_diff(z.as_ptr() as usize) >= MIN_DIFF);
+        assert!((z.as_ptr() as usize).abs_diff(x.as_ptr() as usize) >= MIN_DIFF);
+    }
 }
