@@ -7,9 +7,9 @@
 //!
 //! The allocator in this crate is totally unsafe, and meant specifically for use cases where
 //! stable addresses are required: when you allocate a slot, you get a pointer that stays valid
-//! until you deallocate it. Example use cases include linked structures or self-referential
-//! structures. If you don't have this requirement you may consider using [`slab`] or
-//! [`typed-arena`] for example as a safe alternative.
+//! until you deallocate it (or drop the allocator). Example use cases include linked structures or
+//! self-referential structures. If you don't have this requirement you may consider using [`slab`]
+//! or [`typed-arena`] for example as a safe alternative.
 //!
 //! # Slabs
 //!
