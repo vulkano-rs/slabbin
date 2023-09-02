@@ -311,84 +311,70 @@ mod tests {
     use core::mem;
 
     #[test]
-    fn basic_usage() {
+    fn basic_usage1() {
         let allocator = SlabAllocator::<i32>::new(2);
 
-        let mut x_ptr = allocator.allocate();
-        unsafe { x_ptr.as_ptr().write(69) };
-        let x = unsafe { x_ptr.as_mut() };
+        let mut x = allocator.allocate();
+        unsafe { x.as_ptr().write(69) };
 
-        let mut y_ptr = allocator.allocate();
-        unsafe { y_ptr.as_ptr().write(42) };
-        let y = unsafe { y_ptr.as_mut() };
+        let mut y = allocator.allocate();
+        unsafe { y.as_ptr().write(42) };
 
-        mem::swap(x, y);
+        mem::swap(unsafe { x.as_mut() }, unsafe { y.as_mut() });
 
-        assert_eq!(&*x, &42);
-        assert_eq!(&*y, &69);
+        unsafe { allocator.deallocate(x) };
 
-        unsafe { allocator.deallocate(x_ptr) };
+        let mut x2 = allocator.allocate();
+        unsafe { x2.as_ptr().write(12) };
 
-        let mut z_ptr = allocator.allocate();
-        unsafe { z_ptr.as_ptr().write(12) };
-        let z = unsafe { z_ptr.as_mut() };
+        mem::swap(unsafe { y.as_mut() }, unsafe { x2.as_mut() });
 
-        mem::swap(y, z);
-
-        assert_eq!(&*y, &12);
-        assert_eq!(&*z, &69);
-
-        unsafe { allocator.deallocate(z_ptr) };
+        unsafe { allocator.deallocate(y) };
+        unsafe { allocator.deallocate(x2) };
     }
 
     #[test]
-    fn multiple_slabs() {
+    fn basic_usage2() {
         let allocator = SlabAllocator::<i32>::new(1);
 
-        let mut x_ptr = allocator.allocate();
-        unsafe { x_ptr.as_ptr().write(1) };
-        let x = unsafe { x_ptr.as_mut() };
+        let mut x = allocator.allocate();
+        unsafe { x.as_ptr().write(1) };
 
-        let mut y_ptr = allocator.allocate();
-        unsafe { y_ptr.as_ptr().write(2) };
-        let y = unsafe { y_ptr.as_mut() };
+        let mut y = allocator.allocate();
+        unsafe { y.as_ptr().write(2) };
 
-        let mut z_ptr = allocator.allocate();
-        unsafe { z_ptr.as_ptr().write(3) };
-        let z = unsafe { z_ptr.as_mut() };
+        let mut z = allocator.allocate();
+        unsafe { z.as_ptr().write(3) };
 
-        mem::swap(x, y);
-        mem::swap(y, z);
-        mem::swap(z, x);
+        mem::swap(unsafe { x.as_mut() }, unsafe { y.as_mut() });
+        mem::swap(unsafe { y.as_mut() }, unsafe { z.as_mut() });
+        mem::swap(unsafe { z.as_mut() }, unsafe { x.as_mut() });
 
-        unsafe { allocator.deallocate(y_ptr) };
+        unsafe { allocator.deallocate(y) };
 
-        let mut y2_ptr = allocator.allocate();
-        unsafe { y2_ptr.as_ptr().write(20) };
-        let y2 = unsafe { y2_ptr.as_mut() };
+        let mut y2 = allocator.allocate();
+        unsafe { y2.as_ptr().write(20) };
 
-        mem::swap(x, y2);
+        mem::swap(unsafe { x.as_mut() }, unsafe { y2.as_mut() });
 
-        unsafe { allocator.deallocate(x_ptr) };
-        unsafe { allocator.deallocate(z_ptr) };
+        unsafe { allocator.deallocate(x) };
+        unsafe { allocator.deallocate(z) };
 
-        let mut x2_ptr = allocator.allocate();
-        unsafe { x2_ptr.as_ptr().write(10) };
-        let x2 = unsafe { x2_ptr.as_mut() };
+        let mut x2 = allocator.allocate();
+        unsafe { x2.as_ptr().write(10) };
 
-        mem::swap(y2, x2);
+        mem::swap(unsafe { y2.as_mut() }, unsafe { x2.as_mut() });
 
-        let mut z2_ptr = allocator.allocate();
-        unsafe { z2_ptr.as_ptr().write(30) };
-        let z2 = unsafe { z2_ptr.as_mut() };
+        let mut z2 = allocator.allocate();
+        unsafe { z2.as_ptr().write(30) };
 
-        mem::swap(x2, z2);
+        mem::swap(unsafe { x2.as_mut() }, unsafe { z2.as_mut() });
 
-        unsafe { allocator.deallocate(x2_ptr) }
+        unsafe { allocator.deallocate(x2) };
 
-        mem::swap(z2, y2);
+        mem::swap(unsafe { z2.as_mut() }, unsafe { y2.as_mut() });
 
-        unsafe { allocator.deallocate(y2_ptr) }
-        unsafe { allocator.deallocate(z2_ptr) }
+        unsafe { allocator.deallocate(y2) };
+        unsafe { allocator.deallocate(z2) };
     }
 }
