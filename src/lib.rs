@@ -42,7 +42,7 @@ use core::{
 /// See also [the crate-level documentation] for more information about slab allocation.
 ///
 /// [the crate-level documentation]: self
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct SlabAllocator<T> {
     free_list_head: Cell<Option<NonNull<Slot<T>>>>,
     slab_list_head: Cell<Option<NonNull<Slab<T>>>>,
