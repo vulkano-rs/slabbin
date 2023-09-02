@@ -131,6 +131,8 @@ impl<T> SlabAllocator<T> {
     /// Allocates a new slot for `T`. The memory referred to by the returned pointer needs to be
     /// initialized before creating a reference to it.
     ///
+    /// This operation is *O*(1) (amortized).
+    ///
     /// # Errors
     ///
     /// Returns an error if the global allocator returns an error.
@@ -138,8 +140,6 @@ impl<T> SlabAllocator<T> {
     /// # Panics
     ///
     /// Panics if the size of a slab exceeds `isize::MAX` bytes.
-    ///
-    /// This operation is *O*(1) (amortized).
     #[inline(always)]
     pub fn try_allocate(&self) -> Result<NonNull<T>, AllocError> {
         if let Some(ptr) = self.allocate_fast() {
@@ -191,7 +191,7 @@ impl<T> SlabAllocator<T> {
         // SAFETY:
         // * By our own invariant, `self.slab_capacity` must be non-zero, so the subtraction can't
         //   overflow. We know that the offset must be in bounds of the allocated object because we
-        //   allocated `capacity` slots.
+        //   allocated `self.slab_capacity` slots.
         // * The computed offset cannot overflow an `isize` because we used `Layout` for the layout
         //   calculation.
         // * The computed offset cannot wrap around the address space for the same reason as the
@@ -203,7 +203,7 @@ impl<T> SlabAllocator<T> {
         loop {
             if slot.as_ptr() == last_slot {
                 // SAFETY: We know that this pointer is valid for writes because of the same
-                // reasons as the previous safety comment as well as the fact that the memory was
+                // reasons as the previous safety comment, as well as the fact that the memory was
                 // just now allocated and no pointers to it have been given out yet.
                 unsafe { (*slot.as_ptr()).next_free = self.free_list_head.get() };
 
@@ -270,7 +270,7 @@ impl<T> Drop for SlabAllocator<T> {
         let slab_layout = self.slab_layout();
 
         while let Some(slab) = self.slab_list_head.get() {
-            // SAFETY: `slab` being in the slab list means it refers to a currently allocated slab,
+            // SAFETY: `slab` being in the slab list means it refers to a currently allocated slab
             // and that its header is properly initialized.
             *self.slab_list_head.get_mut() = unsafe { (*slab.as_ptr()).next };
 
