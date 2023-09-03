@@ -87,6 +87,7 @@ use core::{
 ///                 unsafe { (*prev.as_ptr()).next = None };
 ///                 self.tail = Some(prev);
 ///             } else {
+///                 self.head = None;
 ///                 self.tail = None;
 ///             }
 ///
