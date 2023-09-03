@@ -41,6 +41,96 @@ use core::{
 ///
 /// See also [the crate-level documentation] for more information about slab allocation.
 ///
+/// # Examples
+///
+/// A doubly linked list that's backed by slabs:
+///
+/// ```
+/// use slabbin::SlabAllocator;
+/// use std::ptr::{self, NonNull};
+///
+/// struct LinkedList<T> {
+///     head: Option<NonNull<Node<T>>>,
+///     tail: Option<NonNull<Node<T>>>,
+///     allocator: SlabAllocator<Node<T>>,
+/// }
+///
+/// impl<T> LinkedList<T> {
+///     fn new(slab_capacity: usize) -> Self {
+///         LinkedList {
+///             head: None,
+///             tail: None,
+///             allocator: SlabAllocator::new(slab_capacity),
+///         }
+///     }
+///
+///     fn push_back(&mut self, value: T) {
+///         let node = self.allocator.allocate();
+///
+///         // SAFETY: `SlabAllocator::allocate` gives out pointers that are valid for writes (but
+///         // **not** for reads).
+///         unsafe { *node.as_ptr() = Node::new(value) };
+///
+///         if let Some(tail) = self.tail {
+///             unsafe { (*tail.as_ptr()).next = Some(node) };
+///             unsafe { (*node.as_ptr()).prev = Some(tail) };
+///         } else {
+///             self.head = Some(node);
+///         }
+///
+///         self.tail = Some(node);
+///     }
+///
+///     fn pop_back(&mut self) -> Option<T> {
+///         if let Some(tail) = self.tail {
+///             if let Some(prev) = unsafe { (*tail.as_ptr()).prev } {
+///                 unsafe { (*prev.as_ptr()).next = None };
+///                 self.tail = Some(prev);
+///             } else {
+///                 self.tail = None;
+///             }
+///
+///             // SAFETY: We can move out of the value because the node will be deallocated.
+///             let value = unsafe { ptr::read(ptr::addr_of_mut!((*tail.as_ptr()).value)) };
+///
+///             // SAFETY: We allocated this node, and have just removed all linkage to it so that
+///             // it can't be accessed again.
+///             unsafe { self.allocator.deallocate(tail) };
+///
+///             Some(value)
+///         } else {
+///             None
+///         }
+///     }
+/// }
+///
+/// struct Node<T> {
+///     prev: Option<NonNull<Self>>,
+///     next: Option<NonNull<Self>>,
+///     value: T,
+/// }
+///
+/// impl<T> Node<T> {
+///     fn new(value: T) -> Self {
+///         Node {
+///             prev: None,
+///             next: None,
+///             value,
+///         }
+///     }
+/// }
+///
+/// let mut list = LinkedList::new(64);
+/// list.push_back(42);
+/// list.push_back(12);
+/// list.push_back(69);
+///
+/// assert_eq!(list.pop_back(), Some(69));
+/// assert_eq!(list.pop_back(), Some(12));
+/// assert_eq!(list.pop_back(), Some(42));
+/// assert_eq!(list.pop_back(), None);
+/// ```
+///
 /// [the crate-level documentation]: self
 pub struct SlabAllocator<T> {
     free_list_head: Cell<Option<NonNull<Slot<T>>>>,
