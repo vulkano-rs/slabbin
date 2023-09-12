@@ -134,7 +134,12 @@ use core::{
 pub struct SlabAllocator<T> {
     free_list_head: Cell<Option<NonNull<Slot<T>>>>,
     slab_list_head: Cell<Option<NonNull<Slab<T>>>>,
-    free_start: Cell<usize>,
+    /// Points to the slot of the slab of the head of the slab list where the free slots start.
+    /// If the slab list is empty then this is dangling.
+    free_start: Cell<NonNull<Slot<T>>>,
+    /// Points to the end of the slab of the head of the slab list. If the slab list is empty then
+    /// this is dangling.
+    free_end: Cell<NonNull<Slot<T>>>,
     slab_capacity: usize,
 }
 
@@ -165,10 +170,13 @@ impl<T> SlabAllocator<T> {
     pub const fn new(slab_capacity: usize) -> Self {
         assert!(slab_capacity != 0);
 
+        let dangling = NonNull::dangling();
+
         SlabAllocator {
             free_list_head: Cell::new(None),
             slab_list_head: Cell::new(None),
-            free_start: Cell::new(slab_capacity),
+            free_start: Cell::new(dangling),
+            free_end: Cell::new(dangling),
             slab_capacity,
         }
     }
@@ -186,7 +194,7 @@ impl<T> SlabAllocator<T> {
     pub fn allocate(&self) -> NonNull<T> {
         if let Some(ptr) = self.allocate_fast() {
             ptr
-        } else if let Some(ptr) = self.allocate_fast_ish() {
+        } else if let Some(ptr) = self.allocate_fast2() {
             ptr
         } else {
             self.allocate_slow()
@@ -210,7 +218,7 @@ impl<T> SlabAllocator<T> {
     pub fn try_allocate(&self) -> Result<NonNull<T>, AllocError> {
         if let Some(ptr) = self.allocate_fast() {
             Ok(ptr)
-        } else if let Some(ptr) = self.allocate_fast_ish() {
+        } else if let Some(ptr) = self.allocate_fast2() {
             Ok(ptr)
         } else {
             self.allocate_slow()
@@ -247,25 +255,19 @@ impl<T> SlabAllocator<T> {
         Some(ptr)
     }
 
-    #[cold]
-    #[inline]
-    fn allocate_fast_ish(&self) -> Option<NonNull<T>> {
-        let free_start = self.free_start.get();
+    #[inline(always)]
+    fn allocate_fast2(&self) -> Option<NonNull<T>> {
+        let ptr = self.free_start.get();
 
-        if free_start < self.slab_capacity {
-            self.free_start.set(free_start + 1);
+        if ptr < self.free_end.get() {
+            // SAFETY: TODO
+            let free_start = unsafe { NonNull::new_unchecked(ptr.as_ptr().add(1)) };
 
-            if let Some(slab) = self.slab_list_head.get() {
-                // SAFETY: TODO
-                let slots = unsafe { ptr::addr_of_mut!((*slab.as_ptr()).slots) };
+            self.free_start.set(free_start);
 
-                // SAFETY: TODO
-                let ptr = unsafe { NonNull::new_unchecked(slots.add(free_start)) };
+            let ptr = ptr.cast::<T>();
 
-                Some(ptr.cast::<T>())
-            } else {
-                None
-            }
+            Some(ptr)
         } else {
             None
         }
@@ -275,11 +277,18 @@ impl<T> SlabAllocator<T> {
     fn allocate_slow(&self) -> Result<NonNull<T>, AllocError> {
         let slab = self.add_slab()?;
 
-        self.free_start.set(1);
-
         // SAFETY: The allocation succeeded, which means we've been given at least the slab header,
         // so the offset must be in range.
         let slots = unsafe { NonNull::new_unchecked(ptr::addr_of_mut!((*slab.as_ptr()).slots)) };
+
+        // SAFETY: TODO
+        let free_start = unsafe { NonNull::new_unchecked(slots.as_ptr().add(1)) };
+
+        // SAFETY: TODO
+        let free_end = unsafe { NonNull::new_unchecked(slots.as_ptr().add(self.slab_capacity)) };
+
+        self.free_start.set(free_start);
+        self.free_end.set(free_end);
 
         // SAFETY: TODO
         let ptr = slots.cast::<T>();
