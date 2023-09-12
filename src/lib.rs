@@ -444,12 +444,16 @@ mod tests {
         let mut y = allocator.allocate();
         unsafe { y.as_ptr().write(42) };
 
+        assert_eq!(allocator.slab_count(), 1);
+
         mem::swap(unsafe { x.as_mut() }, unsafe { y.as_mut() });
 
         unsafe { allocator.deallocate(x) };
 
         let mut x2 = allocator.allocate();
         unsafe { x2.as_ptr().write(12) };
+
+        assert_eq!(allocator.slab_count(), 1);
 
         mem::swap(unsafe { y.as_mut() }, unsafe { x2.as_mut() });
 
@@ -470,6 +474,8 @@ mod tests {
         let mut z = allocator.allocate();
         unsafe { z.as_ptr().write(3) };
 
+        assert_eq!(allocator.slab_count(), 3);
+
         mem::swap(unsafe { x.as_mut() }, unsafe { y.as_mut() });
         mem::swap(unsafe { y.as_mut() }, unsafe { z.as_mut() });
         mem::swap(unsafe { z.as_mut() }, unsafe { x.as_mut() });
@@ -478,6 +484,8 @@ mod tests {
 
         let mut y2 = allocator.allocate();
         unsafe { y2.as_ptr().write(20) };
+
+        assert_eq!(allocator.slab_count(), 3);
 
         mem::swap(unsafe { x.as_mut() }, unsafe { y2.as_mut() });
 
@@ -491,6 +499,8 @@ mod tests {
 
         let mut z2 = allocator.allocate();
         unsafe { z2.as_ptr().write(30) };
+
+        assert_eq!(allocator.slab_count(), 3);
 
         mem::swap(unsafe { x2.as_mut() }, unsafe { z2.as_mut() });
 
@@ -512,10 +522,14 @@ mod tests {
         let mut y = allocator.allocate();
         unsafe { y.as_ptr().write(2) };
 
+        assert_eq!(allocator.slab_count(), 1);
+
         mem::swap(unsafe { x.as_mut() }, unsafe { y.as_mut() });
 
         let z = allocator.allocate();
         unsafe { z.as_ptr().write(3) };
+
+        assert_eq!(allocator.slab_count(), 2);
 
         unsafe { allocator.deallocate(x) };
         unsafe { allocator.deallocate(z) };
@@ -525,6 +539,8 @@ mod tests {
 
         let mut x2 = allocator.allocate();
         unsafe { x2.as_ptr().write(10) };
+
+        assert_eq!(allocator.slab_count(), 2);
 
         mem::swap(unsafe { x2.as_mut() }, unsafe { z2.as_mut() });
 
