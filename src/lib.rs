@@ -192,14 +192,19 @@ impl<T> SlabAllocator<T> {
     #[inline(always)]
     #[must_use]
     pub fn allocate(&self) -> NonNull<T> {
-        if let Some(ptr) = self.allocate_fast() {
+        let ptr = if let Some(ptr) = self.allocate_fast() {
             ptr
         } else if let Some(ptr) = self.allocate_fast2() {
             ptr
         } else {
             self.allocate_slow()
                 .unwrap_or_else(|_| handle_alloc_error(self.slab_layout()))
-        }
+        };
+
+        // We can safety hand the user a pointer to `T`, which is valid for writes of `T`, seeing a
+        // `Slot<T>` is a union with `T` as one of its fields. That means that the slot must have a
+        // layout that fits `T` as we used `Layout` for the layout calculation of the slots array.
+        ptr.cast::<T>()
     }
 
     /// Allocates a new slot for `T`. The memory referred to by the returned pointer needs to be
@@ -216,17 +221,19 @@ impl<T> SlabAllocator<T> {
     /// Panics if the size of a slab exceeds `isize::MAX` bytes.
     #[inline(always)]
     pub fn try_allocate(&self) -> Result<NonNull<T>, AllocError> {
-        if let Some(ptr) = self.allocate_fast() {
-            Ok(ptr)
+        let ptr = if let Some(ptr) = self.allocate_fast() {
+            ptr
         } else if let Some(ptr) = self.allocate_fast2() {
-            Ok(ptr)
+            ptr
         } else {
-            self.allocate_slow()
-        }
+            self.allocate_slow()?
+        };
+
+        Ok(ptr.cast::<T>())
     }
 
     #[inline(always)]
-    fn allocate_fast(&self) -> Option<NonNull<T>> {
+    fn allocate_fast(&self) -> Option<NonNull<Slot<T>>> {
         let head = self.free_list_head.get()?;
 
         // SAFETY: Each node in the free-list is, by definition, free and therefore must have been
@@ -235,11 +242,6 @@ impl<T> SlabAllocator<T> {
 
         self.free_list_head.set(next);
 
-        // We can safely hand the user a pointer to `T`, which is valid for writes of `T`, because
-        // `Slot<T>` is a `#[repr(C)]` union with `T` as one of its fields. Therefore, the slot
-        // must be aligned for `T`, and the field must start at the same point as the slot.
-        let ptr = head.cast::<T>();
-
         // Make Miri comprehend that a slot must be initialized before reading it, even if
         // `size_of::<T>()` <= `size_of::<usize>()` in which case we happened to have initialized
         // the bytes.
@@ -247,26 +249,40 @@ impl<T> SlabAllocator<T> {
         {
             use core::mem::MaybeUninit;
 
-            let ptr = ptr.as_ptr().cast::<MaybeUninit<T>>();
+            let ptr = head.as_ptr().cast::<MaybeUninit<T>>();
 
             unsafe { ptr.write(MaybeUninit::uninit()) };
         }
 
-        Some(ptr)
+        // We can safety hand the user a pointer to the head of the free-list, seeing as we removed
+        // it from the list so that it cannot be handed out again.
+        Some(head)
     }
 
     #[inline(always)]
-    fn allocate_fast2(&self) -> Option<NonNull<T>> {
+    fn allocate_fast2(&self) -> Option<NonNull<Slot<T>>> {
         let ptr = self.free_start.get();
 
         if ptr < self.free_end.get() {
-            // SAFETY: TODO
+            // SAFETY:
+            // * We know the offset must be in bounds of the allocated object because we just
+            //   checked that `free_start` doesn't refer to the end of the allocated object yet:
+            //   * `free_start` and `free_end` are initialized such that they refer to the start
+            //     and end of the slots array respectively.
+            //   * If the pointers haven't been initialized yet, then they are both dangling and
+            //     equal, which means the the above condition trivially wouldn't hold.
+            //   * This is the only place where `free_start` is incremented, always by 1.
+            //     `free_end` is unchanging until a new slab is allocated.
+            // * The computed offset cannot overflow an `isize` because we used `Layout` for the
+            //   layout calculation.
+            // * The computed offset cannot wrap around the address space for the same reason as
+            //   the previous.
             let free_start = unsafe { NonNull::new_unchecked(ptr.as_ptr().add(1)) };
 
             self.free_start.set(free_start);
 
-            let ptr = ptr.cast::<T>();
-
+            // We can safety hand the user a pointer to the previous free-start, as we incremented
+            // it such that the same slot cannot be handed out again.
             Some(ptr)
         } else {
             None
@@ -274,26 +290,32 @@ impl<T> SlabAllocator<T> {
     }
 
     #[cold]
-    fn allocate_slow(&self) -> Result<NonNull<T>, AllocError> {
+    fn allocate_slow(&self) -> Result<NonNull<Slot<T>>, AllocError> {
         let slab = self.add_slab()?;
 
         // SAFETY: The allocation succeeded, which means we've been given at least the slab header,
         // so the offset must be in range.
         let slots = unsafe { NonNull::new_unchecked(ptr::addr_of_mut!((*slab.as_ptr()).slots)) };
 
-        // SAFETY: TODO
+        // SAFETY:
+        // * We know that the offset must be in bounds of the allocated object because we allocated
+        //   `self.slab_capacity` slots, and by our own invariant, `self.slab_capacity` must be
+        //   non-zero.
+        // * The computed offset cannot overflow an `isize` because we used `Layout` for the layout
+        //   calculation.
+        // * The computed offset cannot wrap around the address space for the same reason as the
+        //   previous.
         let free_start = unsafe { NonNull::new_unchecked(slots.as_ptr().add(1)) };
 
-        // SAFETY: TODO
+        // SAFETY: Same as the previous.
         let free_end = unsafe { NonNull::new_unchecked(slots.as_ptr().add(self.slab_capacity)) };
 
         self.free_start.set(free_start);
         self.free_end.set(free_end);
 
-        // SAFETY: TODO
-        let ptr = slots.cast::<T>();
-
-        Ok(ptr)
+        // We can safely hand the user a pointer to the first slot, seeing as we set the free-start
+        // to the next slot, so that the same slot cannot be handed out again.
+        Ok(slots)
     }
 
     fn add_slab(&self) -> Result<NonNull<Slab<T>>, AllocError> {
