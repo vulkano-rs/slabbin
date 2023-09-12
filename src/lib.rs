@@ -13,13 +13,11 @@
 //!
 //! # Slabs
 //!
-//! A slab is a pre-allocated, pre-initialized contiguous chunk of memory containing *slots*. Each
-//! slot can either be free or occupied. Free slots are chained together in a linked list, and a
-//! slab always starts out with all slots free and linked in order. Due to this, once a slab is
-//! allocated and initialized this way, allocation amounts to a whooping total of 3 operations. The
-//! same goes for deallocation, except that this is always the case, not only in the amortized
-//! case. If you can't afford the amortized case, you can allocate slabs upfront before you start
-//! allocating individual slots.
+//! A slab is a pre-allocated contiguous chunk of memory containing *slots*. Each slot can either
+//! be free or occupied. A slab always starts out with all slots free, and new slots are given out
+//! on each allocation, until they run out, at which point a new slab is allocated. Slots that are
+//! deallocated are chained together in a linked list. Due to this, allocation amounts to 3
+//! operations in the best case and ~8 in the worse case. Deallocation is always 3 operations.
 //!
 //! [`slab`]: https://crates.io/crates/slab
 //! [`typed-arena`]: https://crates.io/crates/typed-arena
@@ -136,6 +134,7 @@ use core::{
 pub struct SlabAllocator<T> {
     free_list_head: Cell<Option<NonNull<Slot<T>>>>,
     slab_list_head: Cell<Option<NonNull<Slab<T>>>>,
+    free_start: Cell<usize>,
     slab_capacity: usize,
 }
 
@@ -169,40 +168,15 @@ impl<T> SlabAllocator<T> {
         SlabAllocator {
             free_list_head: Cell::new(None),
             slab_list_head: Cell::new(None),
+            free_start: Cell::new(slab_capacity),
             slab_capacity,
         }
-    }
-
-    /// Creates a new `SlabAllocator` with the given `slab_count`.
-    ///
-    /// `slab_capacity` is the number of slots in a [slab].
-    ///
-    /// `slab_count` slabs will be allocated upfront, unless its zero, in which case no memory will
-    /// be allocated.
-    ///
-    /// # Panics
-    ///
-    /// * Panics if `slab_capacity` is zero.
-    /// * Panics if the size of a slab exceeds `isize::MAX` bytes.
-    ///
-    /// [slab]: self#slabs
-    #[must_use]
-    pub fn with_slab_count(slab_capacity: usize, slab_count: usize) -> Self {
-        let allocator = SlabAllocator::new(slab_capacity);
-
-        for _ in 0..slab_count {
-            allocator
-                .add_slab()
-                .unwrap_or_else(|_| handle_alloc_error(allocator.slab_layout()));
-        }
-
-        allocator
     }
 
     /// Allocates a new slot for `T`. The memory referred to by the returned pointer needs to be
     /// initialized before creating a reference to it.
     ///
-    /// This operation is *O*(1) (amortized).
+    /// This operation is *O*(1).
     ///
     /// # Panics
     ///
@@ -211,6 +185,8 @@ impl<T> SlabAllocator<T> {
     #[must_use]
     pub fn allocate(&self) -> NonNull<T> {
         if let Some(ptr) = self.allocate_fast() {
+            ptr
+        } else if let Some(ptr) = self.allocate_fast_ish() {
             ptr
         } else {
             self.allocate_slow()
@@ -221,7 +197,7 @@ impl<T> SlabAllocator<T> {
     /// Allocates a new slot for `T`. The memory referred to by the returned pointer needs to be
     /// initialized before creating a reference to it.
     ///
-    /// This operation is *O*(1) (amortized).
+    /// This operation is *O*(1).
     ///
     /// # Errors
     ///
@@ -233,6 +209,8 @@ impl<T> SlabAllocator<T> {
     #[inline(always)]
     pub fn try_allocate(&self) -> Result<NonNull<T>, AllocError> {
         if let Some(ptr) = self.allocate_fast() {
+            Ok(ptr)
+        } else if let Some(ptr) = self.allocate_fast_ish() {
             Ok(ptr)
         } else {
             self.allocate_slow()
@@ -270,13 +248,46 @@ impl<T> SlabAllocator<T> {
     }
 
     #[cold]
-    fn allocate_slow(&self) -> Result<NonNull<T>, AllocError> {
-        self.add_slab()?;
+    #[inline]
+    fn allocate_fast_ish(&self) -> Option<NonNull<T>> {
+        let free_start = self.free_start.get();
 
-        Ok(self.allocate_fast().unwrap())
+        if free_start < self.slab_capacity {
+            self.free_start.set(free_start + 1);
+
+            if let Some(slab) = self.slab_list_head.get() {
+                // SAFETY: TODO
+                let slots = unsafe { ptr::addr_of_mut!((*slab.as_ptr()).slots) };
+
+                // SAFETY: TODO
+                let ptr = unsafe { NonNull::new_unchecked(slots.add(free_start)) };
+
+                Some(ptr.cast::<T>())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
     }
 
-    fn add_slab(&self) -> Result<(), AllocError> {
+    #[cold]
+    fn allocate_slow(&self) -> Result<NonNull<T>, AllocError> {
+        let slab = self.add_slab()?;
+
+        self.free_start.set(1);
+
+        // SAFETY: The allocation succeeded, which means we've been given at least the slab header,
+        // so the offset must be in range.
+        let slots = unsafe { NonNull::new_unchecked(ptr::addr_of_mut!((*slab.as_ptr()).slots)) };
+
+        // SAFETY: TODO
+        let ptr = slots.cast::<T>();
+
+        Ok(ptr)
+    }
+
+    fn add_slab(&self) -> Result<NonNull<Slab<T>>, AllocError> {
         // SAFETY: Slabs always have a non-zero-sized layout.
         let bytes = unsafe { alloc(self.slab_layout()) };
 
@@ -288,53 +299,7 @@ impl<T> SlabAllocator<T> {
 
         self.slab_list_head.set(Some(slab));
 
-        // SAFETY: The offset must be in bounds for the same reason as the previous.
-        let first_slot =
-            unsafe { NonNull::new_unchecked(ptr::addr_of_mut!((*slab.as_ptr()).slots)) };
-
-        // SAFETY:
-        // * By our own invariant, `self.slab_capacity` must be non-zero, so the subtraction can't
-        //   overflow. We know that the offset must be in bounds of the allocated object because we
-        //   allocated `self.slab_capacity` slots.
-        // * The computed offset cannot overflow an `isize` because we used `Layout` for the layout
-        //   calculation.
-        // * The computed offset cannot wrap around the address space for the same reason as the
-        //   previous.
-        let last_slot = unsafe { first_slot.as_ptr().add(self.slab_capacity - 1) };
-
-        let mut slot = first_slot;
-
-        loop {
-            if slot.as_ptr() == last_slot {
-                // SAFETY: We know that this pointer is valid for writes because of the same
-                // reasons as the previous safety comment, as well as the fact that the memory was
-                // just now allocated and no pointers to it have been given out yet.
-                unsafe { (*slot.as_ptr()).next_free = self.free_list_head.get() };
-
-                break;
-            }
-
-            // SAFETY:
-            // * `slot` starts out referring to the first slot and is incremented here in each loop
-            //   iteration. We checked above that it doesn't refer to the last slot. Therefore the
-            //   offset must be in bounds of the allocated object, lest the loop would have ended.
-            // * The computed offset cannot overflow an `isize` because we used `Layout` for the
-            //   layout calculation.
-            // * The computed offset cannot wrap around the address space for the same reason as
-            //   the previous.
-            let next_free = unsafe { NonNull::new_unchecked(slot.as_ptr().add(1)) };
-
-            // SAFETY: We know that this pointer is valid for writes because of the same reasons as
-            // the previous safety comment, as well as the fact that the memory was just now
-            // allocated and no pointers to it have been given out yet.
-            unsafe { (*slot.as_ptr()).next_free = Some(next_free) };
-
-            slot = next_free;
-        }
-
-        self.free_list_head.set(Some(first_slot));
-
-        Ok(())
+        Ok(slab)
     }
 
     fn slab_layout(&self) -> Layout {
