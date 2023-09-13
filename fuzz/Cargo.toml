@@ -1,0 +1,28 @@
+[package]
+name = "slabbin-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+arbitrary = { version = "1.0", features = ["derive_arbitrary"] }
+libfuzzer-sys = "0.4"
+
+[dependencies.slabbin]
+path = ".."
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "allocate_deallocate"
+path = "fuzz_targets/allocate_deallocate.rs"
+test = false
+doc = false
