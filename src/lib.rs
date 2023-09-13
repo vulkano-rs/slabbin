@@ -31,7 +31,7 @@ use alloc::alloc::{alloc, dealloc, handle_alloc_error, Layout};
 use core::{
     cell::Cell,
     fmt,
-    mem::ManuallyDrop,
+    mem::{self, ManuallyDrop},
     ptr::{self, NonNull},
 };
 
@@ -354,6 +354,50 @@ impl<T> SlabAllocator<T> {
     pub unsafe fn deallocate(&self, ptr: NonNull<T>) {
         let ptr = ptr.cast::<Slot<T>>();
 
+        #[cfg(debug_assertions)]
+        {
+            // TODO: Replace with `<*mut Slot<T>>::addr` once it's stabilized.
+            // SAFETY: `*mut Slot<T>` and `usize` have the same layout.
+            #[allow(clippy::transmutes_expressible_as_ptr_casts)]
+            let addr = unsafe { mem::transmute::<*mut Slot<T>, usize>(ptr.as_ptr()) };
+
+            // TODO: Replace with `<*mut Slot<T>>::is_aligned` once it's stabilized.
+            if addr & (mem::align_of::<Slot<T>>() - 1) != 0 {
+                panic!("attempted to deallocate a slot that does not belong to this allocator");
+            }
+
+            let mut head = self.slab_list_head.get();
+
+            loop {
+                let slab = if let Some(slab) = head {
+                    slab
+                } else {
+                    panic!("attempted to deallocate a slot that does not belong to this allocator");
+                };
+
+                // SAFETY: `slab` being in the slab list means it refers to a currently allocated
+                // slab and that contains at least the header, so the offset must be in range.
+                let slots_start = unsafe { ptr::addr_of_mut!((*slab.as_ptr()).slots) };
+
+                // SAFETY:
+                // * We know that the offset must be in bouds of the allocated object because we
+                //   allocated `slab_capacity` slots.
+                // * The computed offset cannot overflow an `isize` because we used `Layout` for
+                //   the layout calculation.
+                // * The computed offset cannot wrap around the address space for the same reason
+                //   as the previous.
+                let slots_end = unsafe { slots_start.add(self.slab_capacity) };
+
+                if (slots_start..slots_end).contains(&ptr.as_ptr()) {
+                    break;
+                }
+
+                // SAFETY: `slab` being in the slab list means it refers to a currently allocated
+                // slab and that its header is properly initialized.
+                head = unsafe { (*slab.as_ptr()).next };
+            }
+        }
+
         // SAFETY: The caller must ensure that `ptr` refers to a currently allocated slot, meaning
         // that `ptr` was derived from one of our slabs using `allocate`, making it a valid ponter.
         // We can overwrite whatever was in the slot before, because nothing must access a pointer
@@ -371,7 +415,7 @@ impl<T> SlabAllocator<T> {
         while let Some(slab) = head {
             // SAFETY: `slab` being in the slab list means it refers to a currently allocated slab
             // and that its header is properly initialized.
-            unsafe { head = (*slab.as_ptr()).next };
+            head = unsafe { (*slab.as_ptr()).next };
 
             count += 1;
         }
@@ -657,5 +701,26 @@ mod tests {
         assert!((x.as_ptr() as usize).abs_diff(y.as_ptr() as usize) >= MIN_DIFF);
         assert!((y.as_ptr() as usize).abs_diff(z.as_ptr() as usize) >= MIN_DIFF);
         assert!((z.as_ptr() as usize).abs_diff(x.as_ptr() as usize) >= MIN_DIFF);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic]
+    fn unaligned_ptr() {
+        let allocator = SlabAllocator::<i32>::new(1);
+        let x = allocator.allocate();
+        unsafe {
+            allocator
+                .deallocate(NonNull::new(x.as_ptr().cast::<u8>().add(1).cast::<i32>()).unwrap())
+        };
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic]
+    fn foreign_ptr() {
+        let allocator = SlabAllocator::<i32>::new(1);
+        let mut x = 69;
+        unsafe { allocator.deallocate((&mut x).into()) };
     }
 }
